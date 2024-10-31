@@ -24,7 +24,7 @@ import os
 # Get the directory of the project
 project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-grid_size = 2  # Size of the square grids between 2 and 5 (don't try with more than 5, you need 16GB of memory to generate and store the 28 millions 5x5 cardan grids)
+grid_size = 4  # Size of the square grids between 2 and 5 (don't try with more than 5, you need 16GB of memory to generate and store the 28 millions 5x5 cardan grids)
 percentage_threshold = 97
 word_size_threshold = 3.6
 possible_angles = [[0, 0, 0, 0], [0, 180, 0, 180], [0, 90, 180, 270], [0, 270, 180, 90]]
@@ -94,8 +94,8 @@ def load_words_into_set(dictionary_path):
     # Add digits
     words.update(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"])
     
-    # Add desired single-letter words
-    words.update(["a", "c", "j", "l", "m", "n", "s", "t", "y"])
+    # Add single-letter words
+    words.update(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"])
     
     # Add desired multi-letter words
     words.add("bsm")
@@ -147,13 +147,15 @@ def valid_percentage(string):
     string = remove_special_characters(remove_accents_and_lowercase(string.strip()))
     total_letters = len(string)
 
-    # DP table to store the best segmentations and valid letters for each position
-    dp_table = [None] * (total_letters + 1)
-    dp_table[0] = ([], 0)  # Initialization: 0 words and 0 valid letters at the start
+    if total_letters == 0:
+        return string, 0, [], 0
+
+    # Initialize the dynamic programming table with tuples (segmentation, valid_letters)
+    dp_table = [(None, 0)] * (total_letters + 1)
+    dp_table[0] = ([], 0)  # Starting point
 
     for j in range(1, total_letters + 1):
-        best_segmentation = None
-        max_valid_letters = 0
+        max_valid_letters, best_segmentation = 0, None
 
         # Iterate over each starting index `i` for the substring ending at `j`
         for i in range(j):
@@ -162,28 +164,20 @@ def valid_percentage(string):
             # Check if the candidate word is in the set of valid words
             if candidate_word in word_set:
                 last_segmentation, last_valid_letters = dp_table[i]
-                last_candidate_word = last_segmentation[-1] if last_segmentation else ""
 
-                # Specific french rules for single-letter words
-                if len(candidate_word) == 1 and candidate_word not in["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]:
-                    if candidate_word not in ["a", "y", "l", "s", "j", "m", "n", "t", "c"] or j == total_letters:
-                        continue
-                    if len(last_candidate_word) == 1:
-                        if last_candidate_word in ["l", "m", "n", "t"] and candidate_word not in ['a', 'y']:
-                            continue
-                        if last_candidate_word in ["s", "j"] and candidate_word != 'y':
-                            continue
-                        if last_candidate_word == candidate_word:
-                            continue
-                # French rules for letters that must be followed by vowels
-                if last_candidate_word in ["l", "s", "j", "m", "n", "t", "qu"] and candidate_word[0] not in 'aeiouyh':
+                # Skip segmentation if it would create three consecutive single-letter words
+                if len(candidate_word) == 1 and len(last_segmentation) >= 2 and all(len(word) == 1 for word in last_segmentation[-2:]):
                     continue
-                if last_candidate_word == "c" and candidate_word[0] not in 'aeiouy':
+
+                # French rules for "qu" that must be followed by vowels
+                last_candidate_word = last_segmentation[-1] if last_segmentation else ""
+                if last_candidate_word in ["qu"] and candidate_word[0] not in 'aeiouyh':
                     continue
 
                 # Calculate the total number of valid letters and update the optimal segmentation
                 total_valid_letters = len(candidate_word) + last_valid_letters
-                if total_valid_letters > max_valid_letters or (total_valid_letters == max_valid_letters and (best_segmentation is None or len(best_segmentation) > len(last_segmentation) + 1)):
+                if total_valid_letters > max_valid_letters or (
+                        total_valid_letters == max_valid_letters and (best_segmentation is None or len(best_segmentation) > len(last_segmentation) + 1)):
                     best_segmentation = last_segmentation + [candidate_word]
                     max_valid_letters = total_valid_letters
 
@@ -197,7 +191,7 @@ def valid_percentage(string):
 
     # Retrieve the best segmentation and the percentage of valid letters
     optimal_segmentation, valid_letters = dp_table[total_letters]
-    valid_percentage = (valid_letters / total_letters) * 100 if total_letters > 0 else 0
+    valid_percentage = (valid_letters / total_letters) * 100
     letters_per_word = len(string) / len(optimal_segmentation)
 
     return string, letters_per_word, optimal_segmentation, valid_percentage
