@@ -24,7 +24,7 @@ import os
 # Get the directory of the project
 project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-grid_size = 4  # Size of the square grids between 2 and 5 (don't try with more than 5, you need 16GB of memory to generate and store the 28 millions 5x5 cardan grids)
+grid_size = 4  # Size of the square grids to generate
 percentage_threshold = 97
 word_size_threshold = 3.6
 possible_angles = [[0, 0, 0, 0], [0, 180, 0, 180], [0, 90, 180, 270], [0, 270, 180, 90]]
@@ -33,55 +33,8 @@ dictionary_path = os.path.join(project_dir, 'data', 'words_wiktionary_fr.txt')  
 exceptions_file = os.path.join(project_dir, 'data', 'words_exceptions.txt')  # File containing exception words
 grid_file = os.path.join(project_dir, 'input_grid.txt')  # File containing a specific grid
 text_file = os.path.join(project_dir, 'input_text.txt')  # File containing text
-
-def save_binary_grids(grids, binary_grid_file, grid_size):
-    # Calculate the number of bits needed (grid_size^2 bits per grid)
-    bits_per_grid = grid_size ** 2
-
-    # Prepare binary content
-    binary_content = bytearray()
-
-    for grid in grids:
-        bits = 0
-        for i in range(grid_size):
-            for j in range(grid_size):
-                # Shift bits to the left and add 1 or 0 based on grid position
-                bits = (bits << 1) | int(grid[i, j])  # Convert to native int to avoid errors
-
-        # Convert to bytes and add to binary content
-        binary_content.extend(bits.to_bytes((bits_per_grid + 7) // 8, byteorder='big'))
-
-    # Write the encoded grids to the binary file
-    with open(binary_grid_file, 'wb') as f:
-        f.write(binary_content)
-
-def load_binary_grids(binary_grid_file, grid_size):
-    # Calculate the number of bits needed (grid_size^2 bits per grid)
-    bits_per_grid = grid_size ** 2
-
-    grids = []
-    with open(binary_grid_file, 'rb') as f:
-        binary_content = f.read()
-        # Decode each grid from binary
-        for i in range(0, len(binary_content), (bits_per_grid + 7) // 8):
-            bits = int.from_bytes(binary_content[i:i + (bits_per_grid + 7) // 8], byteorder='big')
-            grid = np.zeros((grid_size, grid_size), dtype=int)
-            for j in range(bits_per_grid):
-                # Extract each bit to fill the grid
-                grid[grid_size - 1 - (j // grid_size), grid_size - 1 - (j % grid_size)] = (bits >> j) & 1
-            grids.append(grid)
-    return grids
-
-def generate_or_load_grids(grid_size):
-    binary_grid_file = os.path.join(project_dir, 'data', f'grids_cardan_{grid_size}x{grid_size}.bin')
-    try:
-        # Try to load the binary file if it exists
-        grids = load_binary_grids(binary_grid_file, grid_size)
-    except FileNotFoundError:
-        # Generate grids and save them if the file doesn't exist
-        grids = generate_cardan_grids(grid_size)
-        save_binary_grids(grids, binary_grid_file, grid_size)
-    return grids
+max_grid_queue_size = 1000  # Adjust this number based on memory and processing requirements
+worker_size = multiprocessing.cpu_count() - 1 # Adjust this number based processing requirements
 
 def load_words_into_set(dictionary_path):
     words = set()  # Create an empty set
@@ -279,10 +232,9 @@ def fill_result_grid(grid, submatrix, result_grid, i_offset, j_offset, buffer):
                 result_grid[i_offset + i][j_offset + j] = submatrix[i][j]
                 buffer.append(submatrix[i][j])
 
-def generate_cardan_grids(size):
-    """ Generates all possible square Cardan grids for a given size. """
-    positions = list(itertools.product([0, 1], repeat=size * size))
-    grids = []
+def generate_cardan_grids_on_the_fly(size):
+    """ Generator that yields valid square Cardan grids for a given size without storing them in memory. """
+    positions = itertools.product([0, 1], repeat=size * size)
     for pos in positions:
         grid = np.array(pos).reshape(size, size)
         
@@ -290,8 +242,7 @@ def generate_cardan_grids(size):
         if any(np.all(row == 1) for row in grid):
             continue  # Skip this grid if it has a full row of 1s
         
-        grids.append(grid)
-    return grids
+        yield grid  # Yield the grid instead of adding it to a list
 
 def display_grid(grid):
     """ Displays a Cardan grid in a readable form """
@@ -396,11 +347,6 @@ if __name__ == '__main__':
     display(valid_percentage("LATLEXT"))
     display(valid_percentage("LATLEXTSJDO"))
 
-    # Load or generate grids
-    cardan_grids = [load_grid(grid_file)]
-    cardan_grids.extend(generate_or_load_grids(grid_size))
-    total_grids = len(cardan_grids)
-
     # Load text and convert to 2D matrix
     with open(text_file, 'r') as f:
         text = [list(line.strip()) for line in f.readlines()]
@@ -412,38 +358,54 @@ if __name__ == '__main__':
     texts = [text, a, b, c, convert_to_square(text), convert_to_square(a), convert_to_square(b), convert_to_square(c)]
     texts = remove_duplicates(texts)
     print(f"len(texts): {len(texts)}")
+    
+    # Calculates the number of n x n matrices with 0/1 entries where no row has all 1s
+    count_valid_matrices = lambda n: (2**n - 1) ** n
+    total_grids = count_valid_matrices(grid_size) + 1
+    print(f"total_grids: {total_grids}")
 
     with multiprocessing.Manager() as manager:
         displayed_results_set = manager.list()  # Create a shared set
+        output_lock = multiprocessing.Lock()  # Create a lock object
 
         # Create a lock object
         output_lock = multiprocessing.Lock()
         
-        # Start a process for each text
-        processes = []
         for text in texts:
-            print()
-            print()
-            print("text:")
-            print('\n'.join([''.join(line) for line in text]))
-            print()
+            with output_lock:
+                print()
+                print()
+                print("text:")
+                print('\n'.join([''.join(line) for line in text]))
+                print()
+                sys.stdout.flush()
 
             # Complete short lines with empty spaces to get a rectangular matrix
             max_len = max(len(line) for line in text)
             complete_text = [line + [' '] * (max_len - len(line)) for line in text]
-            text = np.array(complete_text)
+            text_array = np.array(complete_text)
 
-            # Create a work queue with the grids
-            grid_queue = multiprocessing.JoinableQueue()
-            for idx, grid in enumerate(cardan_grids):
-                grid_queue.put((idx, grid))
-            
-            # Create a pool of processes to process the grids
-            for _ in range(multiprocessing.cpu_count()):
-                grid_queue.put((-1, None))
-                p = multiprocessing.Process(target=worker, args=(displayed_results_set, output_lock, grid_queue, text, possible_angles, total_grids))
+            # Create a work queue
+            grid_queue = multiprocessing.JoinableQueue(maxsize=max_grid_queue_size)
+            grid_queue.put((1, load_grid(grid_file)))
+
+            # Start worker processes
+            processes = []
+            for _ in range(worker_size):
+                p = multiprocessing.Process(target=worker, args=(displayed_results_set, output_lock, grid_queue, text_array, possible_angles, total_grids))
                 processes.append(p)
                 p.start()
+
+            # Generate grids and add them to the queue as they are created, respecting the max queue size
+            for idx, grid in enumerate(generate_cardan_grids_on_the_fly(grid_size)):
+                # with output_lock:
+                #     print(f"generated: {idx}")
+                #     sys.stdout.flush()
+                grid_queue.put((idx, grid))  # `put` will block if the queue is full
+
+            # Send a stop signal for each worker
+            for _ in range(worker_size):
+                grid_queue.put((-1, None))
 
             # Wait until all tasks are done
             grid_queue.join()

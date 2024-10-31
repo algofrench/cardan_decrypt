@@ -3,12 +3,14 @@
 ### Overview
 **Cardan Decrypt** is a Python-based decryption tool for texts encrypted with the **Cardan Grille cipher**. The project generates or loads **square Cardan grids** of different sizes for decryption and supports **non-square manual grids** provided in `input_grid.txt`. Additional features include **Caesar cipher rotations**, **segmentation validation** with a word dictionary, and **grid and text transformations** to improve decryption accuracy.
 
+The tool uses **multithreading** to handle grid generation and decryption attempts concurrently, improving performance and making efficient use of system resources. **Grids are generated on the fly** as they are processed, rather than being stored in memory, allowing for large-scale decryption tasks without high memory demands.
+
 ---
 
 ## Parameters and Configurations in `cardan.py`
 
 ### Grid and Rotation Configurations
-- **`grid_size`**: Sets the size of the generated square Cardan grids. Values can range from 2 to 5, but larger sizes require significant memory. If a custom grid is provided in `input_grid.txt`, it will be used instead, regardless of shape.
+- **`grid_size`**: Sets the size of the generated square Cardan grids. The custom grid provided by `input_grid.txt` does not have to be square and is processed first. The grids are generated on the fly as they are processed (not stored all in memory at once).
   
 - **`possible_angles`**: Defines rotation sequences for grids during decryption attempts. Each sequence in `possible_angles` is a list of four integers, each representing the angle (in degrees) by which the grid is rotated for each pass over the text. Here are some sample configurations:
   - `[0, 0, 0, 0]`: No rotation, grid is used as-is.
@@ -27,6 +29,8 @@ The tool applies each sequence in `possible_angles` to maximize coverage, testin
 - **`caesar_num_rotations`**: Defines the number of Caesar cipher rotations to apply to the decrypted text. A value of `0` means no Caesar rotation, while other values specify the number of shifts.
 - **`dictionary_path`**: Sets the path to the word dictionary file, used to validate segmented words in the decrypted text. Example path: `dictionary_path = os.path.join(project_dir, 'data', 'words_wiktionary_fr.txt')`.
 - **`exceptions_file`**: Specifies the path to a file containing exception words to ignore during validation. Example path: `exceptions_file = os.path.join(project_dir, 'data', 'words_exceptions.txt')`.
+- **`worker_size`**: Sets the number of worker processes to handle grid processing. It is set by default to `multiprocessing.cpu_count() - 1`, meaning it will utilize all but one of the available CPU cores, allowing some resources to remain available for other tasks.
+- **`max_grid_queue_size`**: Limits the maximum number of grids in the queue at a given time to control memory usage during multithreaded processing. The default is set to `1000`, but this can be adjusted based on system memory and performance requirements.
 
 ### Grid and Text Transformations
 During each decryption attempt, multiple transformations are applied to both the **grid** and the **text**:
@@ -135,7 +139,7 @@ Boulangère sottement osée, sucrant deposant transie, ile localisée, agile sau
 - **Configuration in `cardan.py`**:
 
 ```python
-grid_size = 2  # Size of the square grids between 2 and 5 (don't try with more than 5, you need 16GB of memory to generate and store the 28 million 5x5 Cardan grids)
+grid_size = 2  # Size of the square grids
 percentage_threshold = 97  # Threshold for the percentage of recognized words
 word_size_threshold = 3.6  # Minimum average word size to consider a decryption valid
 possible_angles = [[0, 0, 0, 0], [0, 180, 0, 180], [0, 90, 180, 270], [0, 270, 180, 90]]  # Rotation configurations for grid alignment
