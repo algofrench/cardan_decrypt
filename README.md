@@ -20,7 +20,7 @@ The tool uses **multithreading** to handle grid generation and decryption attemp
 
 The tool applies each sequence in `possible_angles` to maximize coverage, testing various grid orientations for better decryption accuracy.
 
-**Note**: Cardan grids containing full rows of `1`s are ignored, as these do not enable effective encryption.
+**Note**: Cardan grids containing full rows of `1`s or rows with at least three consecutive `1`s are ignored, as these configurations do not enable effective encryption.
 
 ### Additional Configurations
 

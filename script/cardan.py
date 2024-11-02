@@ -331,11 +331,28 @@ def generate_cardan_grids_on_the_fly(size):
     for pos in positions:
         grid = np.array(pos).reshape(size, size)
         
-        # Check if any row in the grid has all 1s
-        if any(np.all(row == 1) for row in grid):
-            continue  # Skip this grid if it has a full row of 1s
+        # Check if any row in the grid has all 1s or has at least three consecutive 1s
+        if any(np.all(row == 1) or np.any(np.convolve(row, [1, 1, 1], mode='valid') == 3) for row in grid):
+            continue  # Skip this grid if it meets either condition
         
         yield grid  # Yield the grid instead of adding it to a list
+
+def count_valid_rows(n):
+    # Generate all possible binary rows of length `n`
+    all_rows = list(itertools.product([0, 1], repeat=n))
+    
+    # Filter rows that don't meet the criteria
+    valid_rows = [
+        row for row in all_rows 
+        if not all(row)  # Exclude rows with all 1s
+        and not any(row[i] == row[i+1] == row[i+2] == 1 for i in range(n - 2))  # Exclude rows with 3 consecutive 1s
+    ]
+    
+    return len(valid_rows)
+
+def count_valid_matrices(n):
+    valid_rows_count = count_valid_rows(n)
+    return valid_rows_count ** n
 
 def display_grid(grid):
     """ Displays a Cardan grid in a readable form """
@@ -452,8 +469,7 @@ if __name__ == '__main__':
     texts = remove_duplicates(texts)
     print(f"len(texts): {len(texts)}")
     
-    # Calculates the number of n x n matrices with 0/1 entries where no row has all 1s
-    count_valid_matrices = lambda n: (2**n - 1) ** n
+    # Calculates the number of n x n matrices with 0/1 entries where no row has all 1s or 3 consecutive 1s
     total_grids = count_valid_matrices(grid_size) + 1
     print(f"total_grids: {total_grids}")
 
