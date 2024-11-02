@@ -36,34 +36,111 @@ text_file = os.path.join(project_dir, 'input_text.txt')  # File containing text
 max_grid_queue_size = 1000  # Adjust this number based on memory and processing requirements
 worker_size = multiprocessing.cpu_count() - 1 # Adjust this number based processing requirements
 
-def load_words_into_set(dictionary_path):
-    words = set()  # Create an empty set
-    with open(dictionary_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            word = line.strip()  # Remove leading and trailing spaces
-            if word:  # Ignore empty lines
-                words.add(word)  # Add the word to the set
-    
-    # Add digits
-    words.update(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"])
-    
-    # Add single-letter words
-    words.update(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"])
-    
-    # Add desired multi-letter words
-    words.add("bsm")
+class TrieNode:
+    __slots__ = ('children', 'is_end_of_word')  # Reduce memory usage with __slots__
 
-    # Read exception words from the file
+    def __init__(self):
+        self.children = {}
+        self.is_end_of_word = False
+
+class Trie:
+    def __init__(self):
+        self.root = TrieNode()
+        self.word_count = 0  # Counter to track the number of words in the Trie
+
+    def insert(self, word):
+        node = self.root
+        for char in word:
+            node = node.children.setdefault(char, TrieNode())
+
+        # Only increment the counter if we're marking a new end-of-word
+        if not node.is_end_of_word:
+            node.is_end_of_word = True
+            self.word_count += 1
+
+    def search(self, word):
+        node = self.root
+        for char in word:
+            node = node.children.get(char)
+            if node is None:
+                return False
+        return node.is_end_of_word
+
+    def remove(self, word):
+        """Remove a word from the Trie, decrementing word_count if successful."""
+        node = self.root
+        stack = []  # Stack to store nodes for backtracking
+
+        # Traverse the Trie to the end of the word
+        for char in word:
+            if char not in node.children:
+                return  # Word not in Trie, no action taken
+            stack.append((node, char))
+            node = node.children[char]
+
+        # If it's the end of a word, mark it as not an end and update word_count
+        if node.is_end_of_word:
+            node.is_end_of_word = False
+            self.word_count -= 1  # Decrement the word count
+
+        # Clean up nodes that are no longer needed
+        while stack:
+            parent, char = stack.pop()
+            child = parent.children[char]
+            if not child.is_end_of_word and not child.children:
+                del parent.children[char]  # Delete node if it's not needed
+            else:
+                break
+
+    def __len__(self):
+        return self.word_count
+
+def load_words_into_trie(dictionary_path, exceptions_file=None):
+    word_trie = Trie()
+    print("Initializing Trie and loading words...")
+
+    # Helper function to add words to the Trie
+    def add_words_to_trie(words, description=""):
+        count = 0
+        for word in words:
+            word_trie.insert(word)
+            count += 1
+        print(f"{description}: {count} words added.")
+
+    # Read the main dictionary file and add each word
     try:
-        with open(exceptions_file, 'r', encoding='utf-8') as fe:
-            for line in fe:
-                exception_word = line.strip()
-                if exception_word in words:  # Remove the word only if it's in the set
-                    words.remove(exception_word)
+        print(f"Loading dictionary from '{dictionary_path}'...")
+        with open(dictionary_path, 'r', encoding='utf-8') as f:
+            add_words_to_trie((line.strip() for line in f if line.strip()), description="Dictionary words")
     except FileNotFoundError:
-        print(f"The file '{exceptions_file}' was not found. No exception words will be removed.")
+        print(f"Error: Dictionary file '{dictionary_path}' not found.")
 
-    return words
+    # Add digits directly
+    add_words_to_trie((str(i) for i in range(10)), description="Digits")
+    
+    # Add single-letter words directly
+    add_words_to_trie("abcdefghijklmnopqrstuvwxyz", description="Single-letter words")
+    
+    # Add any specific multi-letter words needed
+    add_words_to_trie(["bsm"], description="Specific words")
+
+    # Optionally remove exception words if an exceptions file is provided
+    if exceptions_file:
+        try:
+            print(f"Loading exceptions from '{exceptions_file}'...")
+            with open(exceptions_file, 'r', encoding='utf-8') as fe:
+                removed_count = 0
+                for line in fe:
+                    exception_word = line.strip()
+                    if exception_word:
+                        word_trie.remove(exception_word)
+                        removed_count += 1
+                print(f"Exceptions: {removed_count} words removed.")
+        except FileNotFoundError:
+            print(f"Warning: The exceptions file '{exceptions_file}' was not found. No exception words will be removed.")
+
+    print("Trie loading complete.")
+    return word_trie
 
 def remove_duplicates(nested_list):
     # Convert inner lists to tuples to make them hashable, then use a set to remove duplicates
@@ -95,7 +172,7 @@ def remove_special_characters(string):
     string = string.replace(" ", "").replace("'", "").replace(".", "").replace(",", "")
     return string
 
-def valid_percentage(string):
+def valid_percentage(string, percentage_threshold=0):
     # Initial cleaning of the text
     string = remove_special_characters(remove_accents_and_lowercase(string.strip()))
     total_letters = len(string)
@@ -104,48 +181,64 @@ def valid_percentage(string):
         return string, 0, [], 0
 
     # Initialize the dynamic programming table with tuples (segmentation, valid_letters)
-    dp_table = [(None, 0)] * (total_letters + 1)
-    dp_table[0] = ([], 0)  # Starting point
+    dp_table = [([], 0)] * (total_letters + 1)
 
-    for j in range(1, total_letters + 1):
-        max_valid_letters, best_segmentation = 0, None
-
-        # Iterate over each starting index `i` for the substring ending at `j`
-        for i in range(j):
-            candidate_word = string[i:j]
-
-            # Check if the candidate word is in the set of valid words
-            if candidate_word in word_set:
-                last_segmentation, last_valid_letters = dp_table[i]
+    max_end, min_invalid_letters = 0, 0
+    for start in range(total_letters):
+        node = word_trie.root  # Start from the root of the Trie
+        for end in range(start, total_letters):
+            char = string[end]
+            node = node.children.get(char)
+            
+            if node is None:  # No matching prefix in Trie, break early
+                break
+            
+            if node.is_end_of_word:
+                candidate_word = string[start:end + 1]
+                max_end = end + 1
+                last_segmentation, last_valid_letters = dp_table[start]
+                last_word_count = len(last_segmentation)
 
                 # Skip segmentation if it would create three consecutive single-letter words
-                if len(candidate_word) == 1 and len(last_segmentation) >= 2 and all(len(word) == 1 for word in last_segmentation[-2:]):
+                if len(candidate_word) == 1 and last_word_count >= 2 and all(len(word) == 1 for word in last_segmentation[-2:]):
                     continue
 
                 # French rules for "qu" that must be followed by vowels
                 last_candidate_word = last_segmentation[-1] if last_segmentation else ""
-                if last_candidate_word in ["qu"] and candidate_word[0] not in 'aeiouyh':
+                if last_candidate_word == "qu" and candidate_word[0] not in 'aeiouyh':
                     continue
 
-                # Calculate the total number of valid letters and update the optimal segmentation
+                # Calculate the total number of valid letters and the new word count
                 total_valid_letters = len(candidate_word) + last_valid_letters
-                if total_valid_letters > max_valid_letters or (
-                        total_valid_letters == max_valid_letters and (best_segmentation is None or len(best_segmentation) > len(last_segmentation) + 1)):
-                    best_segmentation = last_segmentation + [candidate_word]
-                    max_valid_letters = total_valid_letters
+                total_words = last_word_count + 1
 
-        # If no valid segmentation found, consider the character as invalid
-        if best_segmentation is None:
-            last_segmentation, last_valid_letters = dp_table[j - 1]
-            best_segmentation = last_segmentation + ["[" + string[j - 1] + "]"]
-            max_valid_letters = last_valid_letters
+                # Update the DP table for `end + 1` if we have more valid letters,
+                # or the same number of valid letters but fewer words
+                current_segmentation, current_valid_letters = dp_table[end + 1]
+                current_word_count = len(current_segmentation)
 
-        dp_table[j] = (best_segmentation, max_valid_letters)
+                if total_valid_letters > current_valid_letters or (
+                    total_valid_letters == current_valid_letters and total_words < current_word_count
+                ):
+                    dp_table[end + 1] = (last_segmentation + [candidate_word], total_valid_letters)
+
+        # If no valid segmentation found at this position, consider the character as invalid
+        if dp_table[start + 1][1] == 0:
+            last_segmentation, last_valid_letters = dp_table[start]
+            dp_table[start + 1] = (last_segmentation + ["[" + string[start] + "]"], last_valid_letters)
+
+        # Calculate min_invalid_letters and max_potential_percentage at this point
+        if max_end <= start:
+            min_invalid_letters += 1
+            max_potential_percentage = ((total_letters - min_invalid_letters) / total_letters) * 100
+            # Early exit if max_potential_percentage is below threshold
+            if max_potential_percentage < percentage_threshold:
+                break
 
     # Retrieve the best segmentation and the percentage of valid letters
     optimal_segmentation, valid_letters = dp_table[total_letters]
     valid_percentage = (valid_letters / total_letters) * 100
-    letters_per_word = len(string) / len(optimal_segmentation)
+    letters_per_word = len(string) / len(optimal_segmentation) if len(optimal_segmentation) > 0 else 0
 
     return string, letters_per_word, optimal_segmentation, valid_percentage
 
@@ -272,7 +365,7 @@ def handle_result(displayed_results_set, output_lock, result, grid, angles):
         return
     
     for i in range(caesar_num_rotations + 1):
-        string, letters_per_word, optimal_segmentation, percentage = valid_percentage(apply_rotation(result, i))
+        string, letters_per_word, optimal_segmentation, percentage = valid_percentage(apply_rotation(result, i), percentage_threshold)
         if percentage < percentage_threshold or letters_per_word < word_size_threshold:
             continue
 
@@ -332,8 +425,8 @@ def worker(displayed_results_set, output_lock, queue, text, possible_angles, tot
 if __name__ == '__main__':
 
     # Load words into a set
-    word_set = load_words_into_set(dictionary_path)
-    print(f"Number of unique words: {len(word_set)}")
+    word_trie = load_words_into_trie(dictionary_path, exceptions_file)
+    print(f"Number of unique words: {len(word_trie)}")
 
     display(valid_percentage("monquatriemesinspiremoncinquiemeestenragemonseptiemedressecrachesonvenin"))
     display(valid_percentage("et l alpha romain. Pour trouver mon tout, il suffit d'être Sage"))
@@ -401,7 +494,7 @@ if __name__ == '__main__':
                 # with output_lock:
                 #     print(f"generated: {idx}")
                 #     sys.stdout.flush()
-                grid_queue.put((idx, grid))  # `put` will block if the queue is full
+                grid_queue.put((idx + 1, grid))  # `put` will block if the queue is full
 
             # Send a stop signal for each worker
             for _ in range(worker_size):
