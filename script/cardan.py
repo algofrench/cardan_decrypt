@@ -172,7 +172,7 @@ def remove_special_characters(string):
     string = string.replace(" ", "").replace("'", "").replace(".", "").replace(",", "")
     return string
 
-def valid_percentage(string, percentage_threshold=0):
+def valid_percentage(string, percentage_threshold=0, word_size_threshold=0):
     # Initial cleaning of the text
     string = remove_special_characters(remove_accents_and_lowercase(string.strip()))
     total_letters = len(string)
@@ -183,57 +183,54 @@ def valid_percentage(string, percentage_threshold=0):
     # Initialize the dynamic programming table with tuples (segmentation, valid_letters)
     dp_table = [([], 0)] * (total_letters + 1)
 
-    max_end, min_invalid_letters = 0, 0
     for start in range(total_letters):
-        node = word_trie.root  # Start from the root of the Trie
-        for end in range(start, total_letters):
-            char = string[end]
-            node = node.children.get(char)
-            
-            if node is None:  # No matching prefix in Trie, break early
-                break
-            
-            if node.is_end_of_word:
-                candidate_word = string[start:end + 1]
-                max_end = end + 1
-                last_segmentation, last_valid_letters = dp_table[start]
-                last_word_count = len(last_segmentation)
+        last_segmentation, last_valid_letters = dp_table[start]
+        last_word_count = len(last_segmentation)
+        last_candidate_word = last_segmentation[-1] if last_segmentation else ""
 
-                # Skip segmentation if it would create three consecutive single-letter words
-                if len(candidate_word) == 1 and last_word_count >= 2 and all(len(word) == 1 for word in last_segmentation[-2:]):
-                    continue
+        resulting_letters_per_word = len(string) / (len(last_segmentation) + 1)
+        if resulting_letters_per_word >= word_size_threshold: # Early exit if max_potential_percentage is below threshold
+            min_invalid_letters = last_valid_letters - start
+            max_potential_percentage = ((total_letters - min_invalid_letters) / total_letters) * 100
+            if max_potential_percentage >= percentage_threshold: # Early exit if max_potential_percentage is below threshold
+                
+                node = word_trie.root  # Start from the root of the Trie
+                for end in range(start, total_letters):
+                    char = string[end]
+                    node = node.children.get(char)
+                    
+                    if node is None:  # No matching prefix in Trie, break early
+                        break
+                    
+                    if node.is_end_of_word:
+                        candidate_word = string[start:end + 1]
 
-                # French rules for "qu" that must be followed by vowels
-                last_candidate_word = last_segmentation[-1] if last_segmentation else ""
-                if last_candidate_word == "qu" and candidate_word[0] not in 'aeiouyh':
-                    continue
+                        # Skip segmentation if it would create three consecutive single-letter words
+                        if len(candidate_word) == 1 and last_word_count >= 2 and all(len(word) == 1 for word in last_segmentation[-2:]):
+                            continue
 
-                # Calculate the total number of valid letters and the new word count
-                total_valid_letters = len(candidate_word) + last_valid_letters
-                total_words = last_word_count + 1
+                        # French rules for "qu" that must be followed by vowels
+                        if last_candidate_word == "qu" and candidate_word[0] not in 'aeiouyh':
+                            continue
 
-                # Update the DP table for `end + 1` if we have more valid letters,
-                # or the same number of valid letters but fewer words
-                current_segmentation, current_valid_letters = dp_table[end + 1]
-                current_word_count = len(current_segmentation)
+                        # Calculate the total number of valid letters and the new word count
+                        total_valid_letters = len(candidate_word) + last_valid_letters
+                        total_words = last_word_count + 1
 
-                if total_valid_letters > current_valid_letters or (
-                    total_valid_letters == current_valid_letters and total_words < current_word_count
-                ):
-                    dp_table[end + 1] = (last_segmentation + [candidate_word], total_valid_letters)
+                        # Update the DP table for `end + 1` if we have more valid letters,
+                        # or the same number of valid letters but fewer words
+                        current_segmentation, current_valid_letters = dp_table[end + 1]
+                        current_word_count = len(current_segmentation)
+
+                        if total_valid_letters > current_valid_letters or (
+                            total_valid_letters == current_valid_letters and total_words < current_word_count
+                        ):
+                            dp_table[end + 1] = (last_segmentation + [candidate_word], total_valid_letters)
 
         # If no valid segmentation found at this position, consider the character as invalid
         if dp_table[start + 1][1] == 0:
             last_segmentation, last_valid_letters = dp_table[start]
             dp_table[start + 1] = (last_segmentation + ["[" + string[start] + "]"], last_valid_letters)
-
-        # Calculate min_invalid_letters and max_potential_percentage at this point
-        if max_end <= start:
-            min_invalid_letters += 1
-            max_potential_percentage = ((total_letters - min_invalid_letters) / total_letters) * 100
-            # Early exit if max_potential_percentage is below threshold
-            if max_potential_percentage < percentage_threshold:
-                break
 
     # Retrieve the best segmentation and the percentage of valid letters
     optimal_segmentation, valid_letters = dp_table[total_letters]
@@ -382,7 +379,7 @@ def handle_result(displayed_results_set, output_lock, result, grid, angles):
         return
     
     for i in range(caesar_num_rotations + 1):
-        string, letters_per_word, optimal_segmentation, percentage = valid_percentage(apply_rotation(result, i), percentage_threshold)
+        string, letters_per_word, optimal_segmentation, percentage = valid_percentage(apply_rotation(result, i), percentage_threshold, word_size_threshold)
         if percentage < percentage_threshold or letters_per_word < word_size_threshold:
             continue
 
